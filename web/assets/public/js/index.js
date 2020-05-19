@@ -114,6 +114,15 @@ var app = new Vue({
                                 y: sensorData.value,
                             })
                         break
+                    case "disabled":
+                        let i
+                        for (i = 0; i < this.sensors.length; i++) {
+                            if (this.sensors[i].name === msg.data.name) {
+                                this.sensors.splice(i, 1);
+                                break
+                            }
+                        }
+                        break
                     default:
                         console.log("wrong type of message")
                 }

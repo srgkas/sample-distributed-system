@@ -33,6 +33,8 @@ func newWSController() *wsController {
 
 	go wsc.listenForSources()
 	go wsc.listenForMessages()
+	go wsc.listenForSensorsDisabling()
+
 	return wsc
 }
 
@@ -92,6 +94,23 @@ func (wsc *wsController) listenForSources() {
 
 		wsc.sendMessage(message{
 			Type: "source",
+			Data: sensor,
+		})
+	})
+}
+
+func (wsc *wsController) listenForSensorsDisabling() {
+	qutils.DeclareFanoutExchange(qutils.SensorsDisabledExchange)
+	q := qutils.DeclareQueue(qutils.SensorsDisabledExchange, "", true, []string{""})
+
+	qutils.Consume(q.Name, func(msg amqp.Delivery) {
+		sensor := model.Sensor{
+			Name: string(msg.Body),
+		}
+		log.Println("sensor disabled", sensor)
+
+		wsc.sendMessage(message{
+			Type: "disabled",
 			Data: sensor,
 		})
 	})

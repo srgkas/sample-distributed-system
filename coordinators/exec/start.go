@@ -10,6 +10,7 @@ func main()  {
 	l := coordinators.NewSensorsListener()
 	go l.ListenForSensors()
 	go l.ListenForWebAppDiscovery()
+	go l.ListenForSensorsDisabled()
 	l.DiscoverSensors()
 
 	var a string

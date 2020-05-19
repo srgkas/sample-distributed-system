@@ -10,7 +10,10 @@ import (
 	"github.com/streadway/amqp"
 	"log"
 	"math/rand"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +28,17 @@ var randomizer = rand.New(rand.NewSource(time.Now().UnixNano()))
 var valueRange, nom, value float64
 
 func main() {
+	done := make(chan bool, 1)
+	s := make(chan os.Signal, 1)
+	fmt.Println("listen for signals")
+	signal.Notify(s, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
+
+	go func () {
+		v := <-s
+		fmt.Println("Sensor is down", v)
+		done<-true
+	}()
+
 	flag.Parse()
 
 	valueRange = *max - *min
@@ -32,27 +46,36 @@ func main() {
 	value = randomizer.Float64() * valueRange + *min
 
 	dur, _ := time.ParseDuration(strconv.Itoa(1000/int(*freq)) + "ms")
-	signal := time.Tick(dur)
+	tick := time.Tick(dur)
 	buf := new(bytes.Buffer)
 	sensorName := *name
+	qutils.DeclareFanoutExchange(qutils.SensorsDisabledExchange)
+	qutils.DeclareFanoutExchange(qutils.SensorsListExchange)
 	qutils.PublishToFanout(qutils.SensorsListExchange, []byte(sensorName))
 
 	go listenToDiscover()
 
-	for range signal {
-		reading := dto.SensorMessage{
-			Name: *name,
-			Value: value,
-			Timestamp: time.Now(),
+	for range tick {
+		select {
+		case <-done:
+			qutils.PublishToFanout(qutils.SensorsDisabledExchange, []byte(sensorName))
+			fmt.Sprintf("Sensor %s is down\n", sensorName)
+			return
+		default:
+			reading := dto.SensorMessage{
+				Name: *name,
+				Value: value,
+				Timestamp: time.Now(),
+			}
+			buf.Reset()
+			enc := gob.NewEncoder(buf)
+			enc.Encode(reading)
+			log.Printf("Reading sent. Value %v\n", value)
+
+			qutils.PublishToDirect("", sensorName, buf.Bytes())
+
+			reCalcValue()
 		}
-		buf.Reset()
-		enc := gob.NewEncoder(buf)
-		enc.Encode(reading)
-		log.Printf("Reading sent. Value %v\n", value)
-
-		qutils.PublishToDirect("", sensorName, buf.Bytes())
-
-		reCalcValue()
 	}
 }
 

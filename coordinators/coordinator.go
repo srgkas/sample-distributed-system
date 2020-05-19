@@ -17,11 +17,11 @@ var (
 )
 
 type SensorsListener struct {
-	sensors map[string]bool
-	ea EventAggregator
+	sensors map[string]chan bool
+	ea      EventAggregator
 }
 
-type printListener struct {}
+type printListener struct{}
 
 func (l *printListener) Handle(data EventData) {
 	fmt.Printf("Sensor: %v. Value: %v. Timestamp: %v\n", data.Name, data.Value, data.Timestamp)
@@ -53,8 +53,8 @@ func (l *throttleListener) Handle(data EventData) {
 
 func NewSensorsListener() *SensorsListener {
 	l := SensorsListener{
-		sensors: make(map[string]bool),
-		ea: NewEventAggregator(),
+		sensors: make(map[string]chan bool),
+		ea:      NewEventAggregator(),
 	}
 
 	l.ea.AddListener(eventSensorValueReceived, new(printListener))
@@ -67,8 +67,8 @@ func (l *SensorsListener) ListenForSensors() {
 	q := qutils.DeclareQueue(qutils.SensorsListExchange, "", true, []string{""})
 	qutils.Consume(q.Name, func(msg amqp.Delivery) {
 		sensorName := string(msg.Body)
-		if _, ok := l.sensors[sensorName]; ok == false {
-			l.sensors[sensorName] = true
+		if v := l.sensors[sensorName]; v == nil {
+			l.sensors[sensorName] = make(chan bool)
 			go qutils.PublishToFanout(qutils.WebappSourcesExchange, []byte(sensorName))
 			go l.listenForSensor(sensorName)
 		}
@@ -86,6 +86,22 @@ func (l *SensorsListener) ListenForWebAppDiscovery() {
 	})
 }
 
+func (l *SensorsListener) ListenForSensorsDisabled() {
+	qutils.DeclareFanoutExchange(qutils.SensorsDisabledExchange)
+	q := qutils.DeclareQueue(qutils.SensorsDisabledExchange, "", true, []string{""})
+
+	fmt.Println("start listening for sensors disabling")
+
+	qutils.Consume(q.Name, func(msg amqp.Delivery) {
+		sensor := string(msg.Body)
+		for s, _ := range l.sensors {
+			if s == sensor {
+				delete(l.sensors, s)
+			}
+		}
+	})
+}
+
 func (l *SensorsListener) DiscoverSensors() {
 	qutils.PublishToFanout(qutils.SensorsDiscoverExchange, []byte("hello"))
 }
@@ -99,8 +115,8 @@ func (l *SensorsListener) listenForSensor(sensorName string) {
 		d.Decode(value)
 
 		l.ea.FireEvent(eventSensorValueReceived, EventData{
-			Name: value.Name,
-			Value: value.Value,
+			Name:      value.Name,
+			Value:     value.Value,
 			Timestamp: value.Timestamp,
 		})
 	})
